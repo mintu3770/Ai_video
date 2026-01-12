@@ -28,7 +28,8 @@ def generate_gemini_text(prompt):
         }]
     }
 
-    # Attempt 1: Gemini 2.5 Flash (Current Standard)
+    # Attempt 1: Gemini 2.5 Flash (Current 2026 Standard)
+    #
     model_name = "gemini-2.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
 
@@ -47,29 +48,32 @@ def generate_gemini_text(prompt):
             if response_fallback.status_code == 200:
                 return response_fallback.json()['candidates'][0]['content']['parts'][0]['text'].strip()
             else:
-                return f"Error: {response.text}" # Return exact error for debugging
+                return f"Error: {response.text}"
                 
     except Exception as e:
         return f"Connection Error: {e}"
 
 def generate_poster(prompt):
-    """Generates an image using Flux.1-dev with fallback."""
+    """Generates an image using SDXL (Reliable Free Tier)."""
     try:
+        # We switched to SDXL because Flux hit the '402 Payment' limit.
         image = hf_client.text_to_image(
             f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
-            model="black-forest-labs/FLUX.1-dev"
-        )
-        return image, "Flux"
-    except Exception:
-        # Fallback to SDXL
-        image = hf_client.text_to_image(
-            f"Movie poster for {prompt}, cinematic",
             model="stabilityai/stable-diffusion-xl-base-1.0"
         )
         return image, "SDXL"
+    except Exception as e:
+        # Fallback to the older SD 2.1 if SDXL is busy
+        print(f"SDXL busy ({e}), switching to SD 2.1...")
+        image = hf_client.text_to_image(
+            f"Movie poster for {prompt}, cinematic",
+            model="stabilityai/stable-diffusion-2-1"
+        )
+        return image, "SD 2.1"
 
 def generate_video(prompt):
     """Generates a video using Damo-Vilab."""
+    # Note: This is the most unstable part on the free tier
     video_bytes = hf_client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
@@ -81,7 +85,7 @@ def generate_video(prompt):
 st.set_page_config(page_title="Hybrid AI Studio", page_icon="🦄")
 
 st.title("🦄 The Hybrid AI Studio")
-st.markdown("Text by **Gemini 2.5** | Visuals by **Hugging Face**")
+st.markdown("Text by **Gemini 2.5** | Visuals by **Hugging Face (SDXL)**")
 
 user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A futuristic samurai in a neon city")
 

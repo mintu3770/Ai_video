@@ -4,6 +4,7 @@ from huggingface_hub import InferenceClient
 import tempfile
 
 # --- Configuration & Secrets ---
+# Ensure you have GOOGLE_API_KEY and HF_TOKEN in .streamlit/secrets.toml
 if "GOOGLE_API_KEY" not in st.secrets:
     st.error("Missing GOOGLE_API_KEY in secrets.")
     st.stop()
@@ -28,7 +29,7 @@ def generate_gemini_text(prompt):
         }]
     }
 
-    # Attempt 1: Gemini 2.5 Flash (Current 2026 Standard)
+    # Attempt 1: Gemini 2.5 Flash (Current Standard for 2026)
     #
     model_name = "gemini-2.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
@@ -54,22 +55,17 @@ def generate_gemini_text(prompt):
         return f"Connection Error: {e}"
 
 def generate_poster(prompt):
-    """Generates an image using SDXL (Reliable Free Tier)."""
+    """Generates an image using Stable Diffusion v1.5 (Most Reliable Free Model)."""
     try:
-        # We switched to SDXL because Flux hit the '402 Payment' limit.
+        # We use v1-5 because it is never gated and rarely hits payment limits.
+        #
         image = hf_client.text_to_image(
             f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
-            model="stabilityai/stable-diffusion-xl-base-1.0"
+            model="runwayml/stable-diffusion-v1-5" 
         )
-        return image, "SDXL"
+        return image, "SD v1.5"
     except Exception as e:
-        # Fallback to the older SD 2.1 if SDXL is busy
-        print(f"SDXL busy ({e}), switching to SD 2.1...")
-        image = hf_client.text_to_image(
-            f"Movie poster for {prompt}, cinematic",
-            model="stabilityai/stable-diffusion-2-1"
-        )
-        return image, "SD 2.1"
+        return None, f"Image Error: {e}"
 
 def generate_video(prompt):
     """Generates a video using Damo-Vilab."""
@@ -85,7 +81,7 @@ def generate_video(prompt):
 st.set_page_config(page_title="Hybrid AI Studio", page_icon="🦄")
 
 st.title("🦄 The Hybrid AI Studio")
-st.markdown("Text by **Gemini 2.5** | Visuals by **Hugging Face (SDXL)**")
+st.markdown("Text by **Gemini 2.5** | Visuals by **Stable Diffusion v1.5**")
 
 user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A futuristic samurai in a neon city")
 
@@ -102,20 +98,20 @@ if st.button("Generate Content"):
             caption = generate_gemini_text(user_prompt)
             if "Error" in caption:
                 st.error("Text Generation Failed")
-                st.code(caption) # Show the exact error code
+                st.code(caption) 
             else:
                 st.success("✅ Caption Ready")
                 st.markdown(f"### 📢 {caption}")
 
         # 2. IMAGE (Hugging Face)
         with st.spinner("Drawing Poster..."):
-            try:
-                img, model_name = generate_poster(user_prompt)
+            img, model_name = generate_poster(user_prompt)
+            if img:
                 with col1:
                     st.image(img, caption=f"Poster ({model_name})", use_container_width=True)
                 st.success("✅ Poster Ready")
-            except Exception as e:
-                st.error(f"Image Failed: {e}")
+            else:
+                st.error(model_name) # Prints the error message
 
         # 3. VIDEO (Hugging Face)
         with st.spinner("Rendering Video (May timeout)..."):

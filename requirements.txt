@@ -1,6 +1,4 @@
+google-generativeai>=0.8.3
+huggingface-hub
 streamlit
-google-generativeai
-huggingface_hub
-Pillow
-watchdog
-replicate
+pillow

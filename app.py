@@ -2,106 +2,112 @@ import streamlit as st
 from huggingface_hub import InferenceClient
 import tempfile
 
-# --- Configuration & Secrets ---
-# Ensure "HF_TOKEN" is set in your .streamlit/secrets.toml file.
+# --- Configuration ---
+# We use the token for all requests, but we treat each task differently.
 if "HF_TOKEN" in st.secrets:
-    hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
+    # We initialize the client generally, but will call it differently for each task
+    client = InferenceClient(token=st.secrets["HF_TOKEN"])
 else:
-    st.error("Missing HF_TOKEN. Please add it to your secrets.")
+    st.error("Missing HF_TOKEN in secrets!")
     st.stop()
 
-# --- Functions ---
-
-def generate_catchy_phrase(prompt):
-    """Generates text using Zephyr-7b-beta (Reliable Chat Model)."""
+# --- PIPELINE 1: TEXT (The Reliable "Instruction" Pipeline) ---
+def pipeline_text(prompt):
+    """
+    Uses Google's Flan-T5. 
+    Why? It's not a 'Chat' model. It's an 'Instruction' model.
+    It almost never fails with 'format' errors on the free tier.
+    """
     try:
-        messages = [
-            {"role": "user", "content": f"Write a single, short, punchy, viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."}
-        ]
+        # We use simple text_generation, not chat
+        input_text = f"Write a short viral caption for a video about {prompt}"
         
-        # Zephyr is fully compatible with chat_completion
-        response = hf_client.chat_completion(
-            messages,
-            model="HuggingFaceH4/zephyr-7b-beta", 
-            max_tokens=50,
+        response = client.text_generation(
+            input_text,
+            model="google/flan-t5-large", 
+            max_new_tokens=50,
             temperature=0.7
         )
-        
-        return response.choices[0].message.content.strip('"')
-
+        return response
     except Exception as e:
-        return f"Text Error: {e}"
+        return f"Text Pipeline Error: {e}"
 
-def generate_poster(prompt):
-    """Generates an image using Flux.1-dev with fallback to SDXL."""
+# --- PIPELINE 2: IMAGE (The "Flux" Pipeline) ---
+def pipeline_image(prompt):
+    """
+    Uses Flux.1-dev.
+    This works well but can be busy.
+    """
     try:
-        # Attempt 1: Flux (High Quality)
-        image = hf_client.text_to_image(
-            f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
+        image = client.text_to_image(
+            f"Movie poster for {prompt}, cinematic, 8k, highly detailed",
             model="black-forest-labs/FLUX.1-dev"
         )
-        return image, "Flux.1-dev"
-    except Exception:
-        # Attempt 2: Stable Diffusion XL (Reliable fallback)
-        print("Flux busy, switching to SDXL...")
-        image = hf_client.text_to_image(
-            f"Movie poster for {prompt}, cinematic",
+        return image
+    except Exception as e:
+        st.warning(f"Flux failed ({e}). Switching to SDXL Pipeline...")
+        # Fallback Sub-Pipeline
+        return client.text_to_image(
+            f"Movie poster for {prompt}",
             model="stabilityai/stable-diffusion-xl-base-1.0"
         )
-        return image, "SDXL-Base"
 
-def generate_video(prompt):
-    """Generates a video using Damo-Vilab."""
-    # Note: Free tier video models are heavy and may timeout.
-    video_bytes = hf_client.text_to_video(
+# --- PIPELINE 3: VIDEO (The "Experimental" Pipeline) ---
+def pipeline_video(prompt):
+    """
+    Uses Damo-Vilab.
+    Strictly experimental on free tier.
+    """
+    # We don't try/except here so we can show the specific error in the UI
+    return client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
     )
-    return video_bytes
 
 # --- Streamlit UI ---
 
-st.set_page_config(page_title="Free AI Content Tool", page_icon="🎓")
+st.set_page_config(page_title="AI Pipeline Studio", page_icon="⚡")
 
-st.title("🎓 The Student's AI Studio")
-st.markdown("Generate content for **$0** using Hugging Face (Zephyr & Flux).")
+st.title("⚡ The 3-Pipeline Studio")
+st.markdown("Using specialized models for Text, Image, and Video.")
 
-user_prompt = st.text_input("Enter your content idea:", placeholder="e.g., A robot painting a canvas in space")
+user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A cybernetic tiger running in neon rain")
 
-if st.button("Generate for Free"):
+if st.button("Run Pipelines"):
     if not user_prompt:
-        st.warning("Please enter a prompt first!")
+        st.warning("Input required!")
     else:
-        st.info("🚀 Creating content...")
+        col1, col2 = st.columns(2)
         
-        col1, col2 = st.columns([1, 1])
+        # 1. RUN TEXT PIPELINE
+        with st.spinner("Pipeline 1: Text..."):
+            caption = pipeline_text(user_prompt)
+            st.success("✅ Caption Generated")
+            st.markdown(f"### 📢 {caption}")
 
-        # 1. Text Generation (Zephyr)
-        with st.spinner("Writing Caption..."):
-            phrase = generate_catchy_phrase(user_prompt)
-            st.success("Caption Ready!")
-            st.markdown(f"### 📢 {phrase}")
-
-        # 2. Image Generation (Flux or SDXL)
-        with st.spinner("Generating Poster..."):
+        # 2. RUN IMAGE PIPELINE
+        with st.spinner("Pipeline 2: Image..."):
             try:
-                poster_image, model_used = generate_poster(user_prompt)
+                img = pipeline_image(user_prompt)
                 with col1:
-                    st.image(poster_image, caption=f"Poster ({model_used})", use_container_width=True)
+                    st.image(img, caption="Generated Poster", use_container_width=True)
+                st.success("✅ Image Generated")
             except Exception as e:
-                with col1:
-                    st.error(f"Image generation failed: {e}")
+                st.error(f"Image Pipeline Failed: {e}")
 
-        # 3. Video Generation (Experimental)
-        with st.spinner("Generating Video (May timeout on free tier)..."):
+        # 3. RUN VIDEO PIPELINE
+        with st.spinner("Pipeline 3: Video (Heavy)..."):
             try:
-                video_data = generate_video(user_prompt)
-                # Save to temp file for display
+                vid_bytes = pipeline_video(user_prompt)
+                
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
-                    tfile.write(video_data)
-                    tfile_path = tfile.name
+                    tfile.write(vid_bytes)
+                    vid_path = tfile.name
+                
                 with col2:
-                    st.video(tfile_path)
+                    st.video(vid_path)
+                st.success("✅ Video Generated")
             except Exception as e:
+                # We specifically catch the video error here to keep the rest running
                 with col2:
-                    st.warning(f"Video skipped (Free tier limit). Details: {e}")
+                    st.warning("Video Pipeline Timed Out (Free Tier limit).")

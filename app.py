@@ -1,8 +1,6 @@
 import streamlit as st
 import requests
 from huggingface_hub import InferenceClient
-import io
-from PIL import Image
 import tempfile
 
 # --- Configuration & Secrets ---
@@ -14,19 +12,18 @@ if "HF_TOKEN" not in st.secrets:
     st.error("Missing HF_TOKEN in secrets.")
     st.stop()
 
-# Initialize Hugging Face Client
 hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
 
 # --- Functions ---
 
 def generate_text_gemini(prompt):
     """
-    Direct Web Request to Gemini 1.5 Flash.
-    Bypasses the 'library version' errors on Streamlit Cloud.
+    Connects to Gemini 2.0 Flash (2026 Standard).
     """
     api_key = st.secrets["GOOGLE_API_KEY"]
-    # We use the REST API URL directly
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    # UPDATED: Using gemini-2.0-flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -37,34 +34,40 @@ def generate_text_gemini(prompt):
 
     try:
         response = requests.post(url, headers=headers, json=payload)
+        
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
         else:
-            return f"Gemini Error ({response.status_code}): {response.text}"
+            # Fallback: If 2.0 isn't live yet in your region, try 'gemini-pro' (The alias)
+            print(f"2.0 Flash failed, trying gemini-pro alias...")
+            url_backup = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+            response_backup = requests.post(url_backup, headers=headers, json=payload)
+            
+            if response_backup.status_code == 200:
+                return response_backup.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            else:
+                return f"Gemini Error ({response.status_code}): {response.text}"
+                
     except Exception as e:
         return f"Connection Error: {e}"
 
 def generate_image_hf(prompt):
     """
-    Uses Stable Diffusion v1.5.
-    Why? It is the only model that is 100% free and ungated.
-    Models like Flux (Payment Required) or SD 2.1 (Repo Not Found) are avoided.
+    Uses Stable Diffusion v1.5 (RunwayML).
+    This is the most reliable free model.
     """
     try:
         image = hf_client.text_to_image(
             f"cinematic movie poster for {prompt}, high quality",
             model="runwayml/stable-diffusion-v1-5"
         )
-        return image
+        return image, "SD v1.5"
     except Exception as e:
-        st.error(f"Image Error: {e}")
-        return None
+        # We return the specific error 'e' to the UI so we can see it
+        return None, str(e)
 
 def generate_video_hf(prompt):
-    """
-    Experimental Video Generation.
-    Note: Free tier video servers are often overloaded (503 error).
-    """
+    """Experimental Video Generation."""
     try:
         video_bytes = hf_client.text_to_video(
             prompt,
@@ -76,10 +79,10 @@ def generate_video_hf(prompt):
 
 # --- Streamlit UI ---
 
-st.set_page_config(page_title="AI Studio (Fixed)", page_icon="🛠️")
+st.set_page_config(page_title="AI Studio 2026", page_icon="🚀")
 
-st.title("🛠️ AI Studio: The 'Reliable' Build")
-st.markdown("Text via **Gemini REST** | Images via **Stable Diffusion v1.5**")
+st.title("🚀 AI Studio 2026")
+st.markdown("Text via **Gemini 2.0** | Images via **SD v1.5**")
 
 user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A robot painting in the rain")
 
@@ -89,26 +92,29 @@ if st.button("Generate Content"):
     else:
         col1, col2 = st.columns(2)
 
-        # 1. TEXT (Gemini Direct)
-        with st.spinner("Gemini is thinking..."):
+        # 1. TEXT (Gemini 2.0)
+        with st.spinner("Gemini 2.0 is thinking..."):
             caption = generate_text_gemini(user_prompt)
             if "Error" in caption:
-                st.error(caption)
+                st.error("Text Generation Failed")
+                st.code(caption) # Shows the full error details
             else:
                 st.success("✅ Caption Ready")
                 st.markdown(f"### 📢 {caption}")
 
         # 2. IMAGE (SD v1.5)
-        with st.spinner("Generating Poster (SD v1.5)..."):
-            img = generate_image_hf(user_prompt)
+        with st.spinner("Generating Poster..."):
+            img, error_msg = generate_image_hf(user_prompt)
             if img:
                 with col1:
-                    st.image(img, caption="Generated Poster", use_container_width=True)
+                    st.image(img, caption=f"Poster ({error_msg})", use_container_width=True)
                 st.success("✅ Poster Ready")
             else:
-                st.error("Image generation failed.")
+                with col1:
+                    st.error("Image Failed. Details:")
+                    st.warning(error_msg) # Prints the exact reason
 
-        # 3. VIDEO (Experimental)
+        # 3. VIDEO
         with st.spinner("Attempting Video (May fail)..."):
             vid_bytes = generate_video_hf(user_prompt)
             if vid_bytes:
@@ -120,4 +126,4 @@ if st.button("Generate Content"):
                 st.success("✅ Video Ready")
             else:
                 with col2:
-                    st.warning("Video Server Busy (Common on Free Tier).")
+                    st.warning("Video Server Busy.")

@@ -4,7 +4,6 @@ import tempfile
 
 # --- Configuration & Secrets ---
 # Ensure "HF_TOKEN" is set in your .streamlit/secrets.toml file.
-# We no longer need the Google API key.
 if "HF_TOKEN" in st.secrets:
     hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
 else:
@@ -14,22 +13,20 @@ else:
 # --- Functions ---
 
 def generate_catchy_phrase(prompt):
-    """Generates text using Hugging Face Chat Completion (Mistral v0.3)."""
+    """Generates text using Zephyr-7b-beta (Reliable Chat Model)."""
     try:
-        # Define the message structure for the Chat Model
         messages = [
             {"role": "user", "content": f"Write a single, short, punchy, viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."}
         ]
         
-        # Use chat_completion (Required for Instruct models)
+        # Zephyr is fully compatible with chat_completion
         response = hf_client.chat_completion(
             messages,
-            model="mistralai/Mistral-7B-Instruct-v0.3",
-            max_tokens=60,
+            model="HuggingFaceH4/zephyr-7b-beta", 
+            max_tokens=50,
             temperature=0.7
         )
         
-        # Extract the content from the response object
         return response.choices[0].message.content.strip('"')
 
     except Exception as e:
@@ -55,7 +52,7 @@ def generate_poster(prompt):
 
 def generate_video(prompt):
     """Generates a video using Damo-Vilab."""
-    # Note: This often times out on the free tier (503 error)
+    # Note: Free tier video models are heavy and may timeout.
     video_bytes = hf_client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
@@ -67,7 +64,7 @@ def generate_video(prompt):
 st.set_page_config(page_title="Free AI Content Tool", page_icon="🎓")
 
 st.title("🎓 The Student's AI Studio")
-st.markdown("Generate content for **$0** using Hugging Face (Text, Image & Video).")
+st.markdown("Generate content for **$0** using Hugging Face (Zephyr & Flux).")
 
 user_prompt = st.text_input("Enter your content idea:", placeholder="e.g., A robot painting a canvas in space")
 
@@ -79,7 +76,7 @@ if st.button("Generate for Free"):
         
         col1, col2 = st.columns([1, 1])
 
-        # 1. Text Generation (Mistral Chat)
+        # 1. Text Generation (Zephyr)
         with st.spinner("Writing Caption..."):
             phrase = generate_catchy_phrase(user_prompt)
             st.success("Caption Ready!")

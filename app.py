@@ -29,7 +29,7 @@ def generate_catchy_phrase(prompt):
     """Generates text using Gemini 1.5 Flash."""
     try:
         # Using the standard model name. Ensure google-generativeai >= 0.8.3
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(
             f"Write a single, short, punchy, and viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."
         )

@@ -12,20 +12,19 @@ if "HF_TOKEN" not in st.secrets:
     st.error("Missing HF_TOKEN in secrets.")
     st.stop()
 
-# Initialize Hugging Face Client
 hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
 
 # --- Functions ---
 
 def generate_gemini_text(prompt):
     """
-    Connects directly to Gemini 1.5 Flash via REST API.
-    This bypasses the 'Model not found' library errors.
+    Connects to the standard Gemini Pro model via REST API.
     """
     api_key = st.secrets["GOOGLE_API_KEY"]
     
-    # 1. Try Gemini 1.5 Flash (Newest/Fastest)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # URL for the standard 'gemini-pro' model (Universally available)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
@@ -39,30 +38,20 @@ def generate_gemini_text(prompt):
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
         else:
-            # If 1.5 Flash fails (e.g., 404), try the older Gemini Pro
-            print(f"Flash failed ({response.status_code}), switching to Pro...")
-            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
-            response_fallback = requests.post(url_fallback, headers=headers, json=payload)
-            
-            if response_fallback.status_code == 200:
-                return response_fallback.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-            else:
-                return f"Error: {response.text}"
+            return f"Error: {response.text}"
                 
     except Exception as e:
         return f"Connection Error: {e}"
 
 def generate_poster(prompt):
-    """Generates an image using Flux.1-dev with fallback to SDXL."""
+    """Generates an image using Flux.1-dev with fallback."""
     try:
-        # Attempt 1: Flux (Best Quality)
         image = hf_client.text_to_image(
             f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
             model="black-forest-labs/FLUX.1-dev"
         )
         return image, "Flux"
     except Exception:
-        # Attempt 2: SDXL (Reliable)
         print("Flux busy, switching to SDXL...")
         image = hf_client.text_to_image(
             f"Movie poster for {prompt}, cinematic",
@@ -72,7 +61,6 @@ def generate_poster(prompt):
 
 def generate_video(prompt):
     """Generates a video using Damo-Vilab."""
-    # Note: This is the most unstable part on the free tier
     video_bytes = hf_client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
@@ -84,7 +72,7 @@ def generate_video(prompt):
 st.set_page_config(page_title="Hybrid AI Studio", page_icon="🦄")
 
 st.title("🦄 The Hybrid AI Studio")
-st.markdown("Text by **Gemini** | Visuals by **Hugging Face**")
+st.markdown("Text by **Gemini Pro** | Visuals by **Hugging Face**")
 
 user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A futuristic samurai in a neon city")
 
@@ -96,7 +84,7 @@ if st.button("Generate Content"):
         
         col1, col2 = st.columns(2)
 
-        # 1. TEXT (Gemini via Direct Web Call)
+        # 1. TEXT (Gemini Pro)
         with st.spinner("Gemini is writing..."):
             caption = generate_gemini_text(user_prompt)
             if "Error" in caption:

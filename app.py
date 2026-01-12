@@ -1,42 +1,56 @@
 import streamlit as st
-import google.generativeai as genai
+import requests
 from huggingface_hub import InferenceClient
 import tempfile
 
 # --- Configuration & Secrets ---
-# 1. Google Auth
-if "GOOGLE_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-else:
+if "GOOGLE_API_KEY" not in st.secrets:
     st.error("Missing GOOGLE_API_KEY in secrets.")
     st.stop()
 
-# 2. Hugging Face Auth
-if "HF_TOKEN" in st.secrets:
-    hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
-else:
+if "HF_TOKEN" not in st.secrets:
     st.error("Missing HF_TOKEN in secrets.")
     st.stop()
 
+# Initialize Hugging Face Client
+hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
+
 # --- Functions ---
 
-def generate_catchy_phrase(prompt):
-    """Generates text using Google Gemini 1.5 Flash."""
+def generate_gemini_text(prompt):
+    """
+    Connects directly to Gemini 1.5 Flash via REST API.
+    This bypasses the 'Model not found' library errors.
+    """
+    api_key = st.secrets["GOOGLE_API_KEY"]
+    
+    # 1. Try Gemini 1.5 Flash (Newest/Fastest)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [{"text": f"Write a single, short, punchy, viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."}]
+        }]
+    }
+
     try:
-        # Using 1.5 Flash for speed and quality
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(
-            f"Write a single, short, punchy, viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."
-        )
-        return response.text.strip()
+        response = requests.post(url, headers=headers, json=payload)
+        
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        else:
+            # If 1.5 Flash fails (e.g., 404), try the older Gemini Pro
+            print(f"Flash failed ({response.status_code}), switching to Pro...")
+            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+            response_fallback = requests.post(url_fallback, headers=headers, json=payload)
+            
+            if response_fallback.status_code == 200:
+                return response_fallback.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            else:
+                return f"Error: {response.text}"
+                
     except Exception as e:
-        # Fallback to older model if Flash fails
-        try:
-            model = genai.GenerativeModel('gemini-pro')
-            response = model.generate_content(f"Write a short caption for: {prompt}")
-            return response.text.strip()
-        except:
-            return f"Gemini Error: {e}"
+        return f"Connection Error: {e}"
 
 def generate_poster(prompt):
     """Generates an image using Flux.1-dev with fallback to SDXL."""
@@ -82,9 +96,9 @@ if st.button("Generate Content"):
         
         col1, col2 = st.columns(2)
 
-        # 1. TEXT (Gemini)
+        # 1. TEXT (Gemini via Direct Web Call)
         with st.spinner("Gemini is writing..."):
-            caption = generate_catchy_phrase(user_prompt)
+            caption = generate_gemini_text(user_prompt)
             if "Error" in caption:
                 st.error(caption)
             else:

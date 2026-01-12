@@ -3,49 +3,63 @@ import google.generativeai as genai
 from huggingface_hub import InferenceClient
 import io
 from PIL import Image
+import tempfile
 
 # --- Configuration & Secrets ---
-# For local testing, create a .streamlit/secrets.toml file with:
-# GOOGLE_API_KEY = "your_key"
-# HF_TOKEN = "your_hf_key"
+# Ensure you have set GOOGLE_API_KEY and HF_TOKEN in .streamlit/secrets.toml
+# or in your deployment settings.
 
+# 1. Authenticate Gemini
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+else:
+    st.error("Missing GOOGLE_API_KEY. Please add it to your secrets.")
+    st.stop()
 
+# 2. Authenticate Hugging Face
 if "HF_TOKEN" in st.secrets:
-    # We use the free InferenceClient
     hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
 else:
-    st.error("Missing Hugging Face Token in secrets!")
+    st.error("Missing HF_TOKEN. Please add it to your secrets.")
     st.stop()
 
 # --- Functions ---
 
 def generate_catchy_phrase(prompt):
-    """Generates text using Gemini (Free Tier)."""
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content(
-        f"Write a single, short, punchy, and viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."
-    )
-    return response.text.strip()
+    """Generates text using Gemini 1.5 Flash."""
+    try:
+        # Using the standard model name. Ensure google-generativeai >= 0.8.3
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(
+            f"Write a single, short, punchy, and viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."
+        )
+        return response.text.strip()
+    except Exception as e:
+        return f"Error generating text: {e}"
 
 def generate_poster(prompt):
-    """Generates an image using Flux.1-dev via Hugging Face (Free)."""
-    # FLUX.1-dev is currently one of the best open models
-    image = hf_client.text_to_image(
-        f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
-        model="black-forest-labs/FLUX.1-dev"
-    )
-    return image
+    """Generates an image using Flux.1-dev with fallback to SDXL."""
+    # Attempt 1: Flux (High Quality, but often busy)
+    try:
+        image = hf_client.text_to_image(
+            f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
+            model="black-forest-labs/FLUX.1-dev"
+        )
+        return image, "Flux.1-dev"
+    except Exception:
+        # Attempt 2: Stable Diffusion XL (Reliable fallback)
+        print("Flux busy, switching to SDXL...")
+        image = hf_client.text_to_image(
+            f"Movie poster for {prompt}, cinematic",
+            model="stabilityai/stable-diffusion-xl-base-1.0"
+        )
+        return image, "SDXL-Base"
 
 def generate_video(prompt):
     """
-    Generates a video using the Damo-Vilab model via Hugging Face.
-    Note: Free tier video models are small (low res) and short (2s),
-    but they are completely free!
+    Generates a video using Damo-Vilab.
+    WARNING: Free tier video models often timeout (503 Service Unavailable).
     """
-    # This specific call uses the text-to-video-ms-1.7b model
-    # We output bytes directly
     video_bytes = hf_client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
@@ -59,53 +73,42 @@ st.set_page_config(page_title="Free AI Content Tool", page_icon="🎓")
 st.title("🎓 The Student's AI Studio")
 st.markdown("Generate content for **$0** using Gemini & Hugging Face.")
 
+# Input
 user_prompt = st.text_input("Enter your content idea:", placeholder="e.g., A robot painting a canvas in space")
 
 if st.button("Generate for Free"):
     if not user_prompt:
         st.warning("Please enter a prompt first!")
     else:
-        st.info("🚀 Creating content (this might take 30s as we use free servers)...")
+        st.info("🚀 Creating content (Images take ~10s, Video takes ~30s)...")
         
+        # Create columns for layout
         col1, col2 = st.columns([1, 1])
 
-        # 1. Catchy Phrase (Gemini)
+        # 1. Text Generation (Gemini)
         with st.spinner("Gemini is thinking..."):
-            try:
-                phrase = generate_catchy_phrase(user_prompt)
-                st.success("Caption Ready!")
-                st.markdown(f"### 📢 {phrase}")
-            except Exception as e:
-                st.error(f"Text Error: {e}")
+            phrase = generate_catchy_phrase(user_prompt)
+            st.success("Caption Ready!")
+            st.markdown(f"### 📢 {phrase}")
 
-        # 2. Poster (Hugging Face Flux)
-        with st.spinner("Generating Poster (Flux)..."):
+        # 2. Image Generation (Flux/SDXL)
+        with st.spinner("Generating Poster..."):
             try:
-                # Flux takes about 10-15 seconds on free tier
-                poster_image = generate_poster(user_prompt)
+                # We pass 'user_prompt' directly to avoid NameError
+                poster_image, model_used = generate_poster(user_prompt)
+                
                 with col1:
-                    st.image(poster_image, caption="Flux.1 Poster", use_container_width=True)
+                    st.image(poster_image, caption=f"Poster ({model_used})", use_container_width=True)
             except Exception as e:
-                st.warning("Flux is busy (common on free tier). Trying SDXL...")
-                try:
-                    # Fallback to Stable Diffusion XL if Flux is busy
-                    poster_image = hf_client.text_to_image(
-                        f"Movie poster for {prompt}, cinematic",
-                        model="stabilityai/stable-diffusion-xl-base-1.0"
-                    )
-                    with col1:
-                        st.image(poster_image, caption="SDXL Poster", use_container_width=True)
-                except Exception as inner_e:
-                    st.error(f"Image Error: {inner_e}")
+                with col1:
+                    st.error(f"Image generation failed: {e}")
 
-        # 3. Video (Hugging Face Video)
-        with st.spinner("Generating Video (Standard Free Model)..."):
+        # 3. Video Generation (Experimental)
+        with st.spinner("Generating Video (May fail on free tier)..."):
             try:
                 video_data = generate_video(user_prompt)
                 
-                # Save bytes to a temporary file so Streamlit can read it
-                # (Hugging Face returns raw bytes)
-                import tempfile
+                # Save to temp file for display
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
                     tfile.write(video_data)
                     tfile_path = tfile.name
@@ -113,4 +116,5 @@ if st.button("Generate for Free"):
                 with col2:
                     st.video(tfile_path)
             except Exception as e:
-                st.error(f"Video Error (Free servers might be overloaded): {e}")
+                with col2:
+                    st.warning(f"Video generation skipped (Server Busy/Timeout). This is common on the free tier.\nError details: {e}")

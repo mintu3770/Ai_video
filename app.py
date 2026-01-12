@@ -1,107 +1,116 @@
 import streamlit as st
+import google.generativeai as genai
 from huggingface_hub import InferenceClient
 import tempfile
 
-# --- Configuration ---
-if "HF_TOKEN" in st.secrets:
-    client = InferenceClient(token=st.secrets["HF_TOKEN"])
+# --- Configuration & Secrets ---
+# 1. Google Auth
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("Missing HF_TOKEN in secrets!")
+    st.error("Missing GOOGLE_API_KEY in secrets.")
     st.stop()
 
-# --- PIPELINE 1: TEXT (Lightweight & Fast) ---
-def pipeline_text(prompt):
-    """
-    Uses Google's Flan-T5-Base.
-    This model is small (250MB) vs others (10GB+), 
-    so it loads instantly and rarely times out on free tier.
-    """
-    try:
-        # T5 is an encoder-decoder model, perfect for "instructions"
-        input_text = f"write a viral caption about {prompt}"
-        
-        response = client.text_generation(
-            input_text,
-            model="google/flan-t5-base", 
-            max_new_tokens=50,
-            temperature=0.7
-        )
-        return response
-        
-    except Exception as e:
-        # Return the exact error so we can see it in the UI
-        return f"Error: {e}"
+# 2. Hugging Face Auth
+if "HF_TOKEN" in st.secrets:
+    hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
+else:
+    st.error("Missing HF_TOKEN in secrets.")
+    st.stop()
 
-# --- PIPELINE 2: IMAGE (Flux with Fallback) ---
-def pipeline_image(prompt):
+# --- Functions ---
+
+def generate_catchy_phrase(prompt):
+    """Generates text using Google Gemini 1.5 Flash."""
     try:
-        image = client.text_to_image(
-            f"Movie poster for {prompt}, cinematic, 8k, highly detailed",
+        # Using 1.5 Flash for speed and quality
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(
+            f"Write a single, short, punchy, viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."
+        )
+        return response.text.strip()
+    except Exception as e:
+        # Fallback to older model if Flash fails
+        try:
+            model = genai.GenerativeModel('gemini-pro')
+            response = model.generate_content(f"Write a short caption for: {prompt}")
+            return response.text.strip()
+        except:
+            return f"Gemini Error: {e}"
+
+def generate_poster(prompt):
+    """Generates an image using Flux.1-dev with fallback to SDXL."""
+    try:
+        # Attempt 1: Flux (Best Quality)
+        image = hf_client.text_to_image(
+            f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
             model="black-forest-labs/FLUX.1-dev"
         )
         return image, "Flux"
     except Exception:
-        # Fallback to SDXL if Flux is busy
-        image = client.text_to_image(
-            f"Movie poster for {prompt}",
+        # Attempt 2: SDXL (Reliable)
+        print("Flux busy, switching to SDXL...")
+        image = hf_client.text_to_image(
+            f"Movie poster for {prompt}, cinematic",
             model="stabilityai/stable-diffusion-xl-base-1.0"
         )
         return image, "SDXL"
 
-# --- PIPELINE 3: VIDEO ---
-def pipeline_video(prompt):
-    return client.text_to_video(
+def generate_video(prompt):
+    """Generates a video using Damo-Vilab."""
+    # Note: This is the most unstable part on the free tier
+    video_bytes = hf_client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
     )
+    return video_bytes
 
 # --- Streamlit UI ---
 
-st.set_page_config(page_title="AI Pipeline Studio", page_icon="⚡")
+st.set_page_config(page_title="Hybrid AI Studio", page_icon="🦄")
 
-st.title("⚡ The 3-Pipeline Studio")
-st.markdown("Using **Fast Models** (Flan-T5) to prevent timeouts.")
+st.title("🦄 The Hybrid AI Studio")
+st.markdown("Text by **Gemini** | Visuals by **Hugging Face**")
 
-user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A cybernetic tiger running in neon rain")
+user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A futuristic samurai in a neon city")
 
-if st.button("Run Pipelines"):
+if st.button("Generate Content"):
     if not user_prompt:
-        st.warning("Input required!")
+        st.warning("Please enter a prompt first!")
     else:
-        col1, col2 = st.columns(2)
+        st.info("🚀 Launching Hybrid Agents...")
         
-        # 1. RUN TEXT PIPELINE
-        with st.spinner("Pipeline 1: Text..."):
-            caption = pipeline_text(user_prompt)
-            
-            # Check for error string
-            if caption.startswith("Error:"):
-                st.error("Text Generation Failed. Details:")
-                st.code(caption) # This will print the EXACT error message
+        col1, col2 = st.columns(2)
+
+        # 1. TEXT (Gemini)
+        with st.spinner("Gemini is writing..."):
+            caption = generate_catchy_phrase(user_prompt)
+            if "Error" in caption:
+                st.error(caption)
             else:
-                st.success("✅ Caption Generated")
+                st.success("✅ Caption Ready")
                 st.markdown(f"### 📢 {caption}")
 
-        # 2. RUN IMAGE PIPELINE
-        with st.spinner("Pipeline 2: Image..."):
+        # 2. IMAGE (Hugging Face)
+        with st.spinner("Drawing Poster..."):
             try:
-                img, model_name = pipeline_image(user_prompt)
+                img, model_name = generate_poster(user_prompt)
                 with col1:
                     st.image(img, caption=f"Poster ({model_name})", use_container_width=True)
-                st.success("✅ Image Generated")
+                st.success("✅ Poster Ready")
             except Exception as e:
-                st.error(f"Image Pipeline Failed: {e}")
+                st.error(f"Image Failed: {e}")
 
-        # 3. RUN VIDEO PIPELINE
-        with st.spinner("Pipeline 3: Video (Heavy)..."):
+        # 3. VIDEO (Hugging Face)
+        with st.spinner("Rendering Video (May timeout)..."):
             try:
-                vid_bytes = pipeline_video(user_prompt)
+                vid_bytes = generate_video(user_prompt)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
                     tfile.write(vid_bytes)
                     vid_path = tfile.name
                 with col2:
                     st.video(vid_path)
-                st.success("✅ Video Generated")
+                st.success("✅ Video Ready")
             except Exception as e:
                 with col2:
-                    st.warning("Video Pipeline Timed Out (Free Tier limit).")
+                    st.warning("Video skipped (Server Busy).")

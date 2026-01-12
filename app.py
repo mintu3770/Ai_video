@@ -3,62 +3,65 @@ from huggingface_hub import InferenceClient
 import tempfile
 
 # --- Configuration ---
-# We use the token for all requests, but we treat each task differently.
 if "HF_TOKEN" in st.secrets:
-    # We initialize the client generally, but will call it differently for each task
     client = InferenceClient(token=st.secrets["HF_TOKEN"])
 else:
     st.error("Missing HF_TOKEN in secrets!")
     st.stop()
 
-# --- PIPELINE 1: TEXT (The Reliable "Instruction" Pipeline) ---
+# --- PIPELINE 1: TEXT (Dual-Model Fallback) ---
 def pipeline_text(prompt):
     """
-    Uses Google's Flan-T5. 
-    Why? It's not a 'Chat' model. It's an 'Instruction' model.
-    It almost never fails with 'format' errors on the free tier.
+    Tries Microsoft Phi-2 (Smart). 
+    If that fails, falls back to GPT-2 (Reliable).
     """
+    # Attempt 1: Microsoft Phi-2 (Smart & Fast)
     try:
-        # We use simple text_generation, not chat
-        input_text = f"Write a short viral caption for a video about {prompt}"
+        # Phi-2 works best with a "completion" style prompt
+        input_text = f"Instruct: Write a short, viral social media caption for a video about {prompt}.\nOutput:"
         
         response = client.text_generation(
             input_text,
-            model="google/flan-t5-large", 
+            model="microsoft/phi-2", 
             max_new_tokens=50,
-            temperature=0.7
+            temperature=0.7,
+            stop_sequences=["\n"] # Stop it from rambling
         )
-        return response
-    except Exception as e:
-        return f"Text Pipeline Error: {e}"
+        return response.strip()
+        
+    except Exception as e1:
+        # Attempt 2: GPT-2 (The "Old Reliable" fallback)
+        try:
+            print(f"Phi-2 failed ({e1}). Switching to GPT-2...")
+            response = client.text_generation(
+                f"Video caption for {prompt}:", # Simple prompt for GPT-2
+                model="gpt2", 
+                max_new_tokens=30
+            )
+            return response.strip()
+        except Exception as e2:
+            return f"Error: Both models failed. Details: {e2}"
 
-# --- PIPELINE 2: IMAGE (The "Flux" Pipeline) ---
+# --- PIPELINE 2: IMAGE (Flux) ---
 def pipeline_image(prompt):
-    """
-    Uses Flux.1-dev.
-    This works well but can be busy.
-    """
+    """Uses Flux.1-dev with SDXL fallback."""
     try:
         image = client.text_to_image(
             f"Movie poster for {prompt}, cinematic, 8k, highly detailed",
             model="black-forest-labs/FLUX.1-dev"
         )
-        return image
-    except Exception as e:
-        st.warning(f"Flux failed ({e}). Switching to SDXL Pipeline...")
-        # Fallback Sub-Pipeline
-        return client.text_to_image(
+        return image, "Flux"
+    except Exception:
+        # Fallback to SDXL
+        image = client.text_to_image(
             f"Movie poster for {prompt}",
             model="stabilityai/stable-diffusion-xl-base-1.0"
         )
+        return image, "SDXL"
 
-# --- PIPELINE 3: VIDEO (The "Experimental" Pipeline) ---
+# --- PIPELINE 3: VIDEO ---
 def pipeline_video(prompt):
-    """
-    Uses Damo-Vilab.
-    Strictly experimental on free tier.
-    """
-    # We don't try/except here so we can show the specific error in the UI
+    """Experimental Video Generation."""
     return client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
@@ -82,15 +85,21 @@ if st.button("Run Pipelines"):
         # 1. RUN TEXT PIPELINE
         with st.spinner("Pipeline 1: Text..."):
             caption = pipeline_text(user_prompt)
-            st.success("✅ Caption Generated")
-            st.markdown(f"### 📢 {caption}")
+            
+            # Check if the result is an error message
+            if "Error:" in caption:
+                st.error("Text Pipeline Failed")
+                st.write(caption) # Show the error details
+            else:
+                st.success("✅ Caption Generated")
+                st.markdown(f"### 📢 {caption}")
 
         # 2. RUN IMAGE PIPELINE
         with st.spinner("Pipeline 2: Image..."):
             try:
-                img = pipeline_image(user_prompt)
+                img, model_name = pipeline_image(user_prompt)
                 with col1:
-                    st.image(img, caption="Generated Poster", use_container_width=True)
+                    st.image(img, caption=f"Poster ({model_name})", use_container_width=True)
                 st.success("✅ Image Generated")
             except Exception as e:
                 st.error(f"Image Pipeline Failed: {e}")
@@ -99,15 +108,12 @@ if st.button("Run Pipelines"):
         with st.spinner("Pipeline 3: Video (Heavy)..."):
             try:
                 vid_bytes = pipeline_video(user_prompt)
-                
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
                     tfile.write(vid_bytes)
                     vid_path = tfile.name
-                
                 with col2:
                     st.video(vid_path)
                 st.success("✅ Video Generated")
             except Exception as e:
-                # We specifically catch the video error here to keep the rest running
                 with col2:
                     st.warning("Video Pipeline Timed Out (Free Tier limit).")

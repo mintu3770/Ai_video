@@ -3,7 +3,8 @@ from huggingface_hub import InferenceClient
 import tempfile
 
 # --- Configuration & Secrets ---
-# We now only need the HF_TOKEN since it handles both Image and Text.
+# Ensure "HF_TOKEN" is set in your .streamlit/secrets.toml file.
+# We no longer need the Google API key.
 if "HF_TOKEN" in st.secrets:
     hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
 else:
@@ -13,34 +14,39 @@ else:
 # --- Functions ---
 
 def generate_catchy_phrase(prompt):
-    """Generates text using Hugging Face (Mistral-7B)."""
+    """Generates text using Hugging Face Chat Completion (Mistral v0.3)."""
     try:
-        # Using Mistral via the working Hugging Face token
-        prompt_text = f"Write a single, short, punchy, viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."
+        # Define the message structure for the Chat Model
+        messages = [
+            {"role": "user", "content": f"Write a single, short, punchy, viral social media caption (under 15 words) for a video about: {prompt}. No hashtags, just the phrase."}
+        ]
         
-        response = hf_client.text_generation(
-            prompt_text,
+        # Use chat_completion (Required for Instruct models)
+        response = hf_client.chat_completion(
+            messages,
             model="mistralai/Mistral-7B-Instruct-v0.3",
-            max_new_tokens=60,
+            max_tokens=60,
             temperature=0.7
         )
-        # Clean up response (sometimes models repeat the prompt)
-        clean_response = response.replace(prompt_text, "").strip().strip('"')
-        return clean_response
+        
+        # Extract the content from the response object
+        return response.choices[0].message.content.strip('"')
+
     except Exception as e:
         return f"Text Error: {e}"
 
 def generate_poster(prompt):
     """Generates an image using Flux.1-dev with fallback to SDXL."""
     try:
-        # Attempt 1: Flux
+        # Attempt 1: Flux (High Quality)
         image = hf_client.text_to_image(
             f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
             model="black-forest-labs/FLUX.1-dev"
         )
         return image, "Flux.1-dev"
     except Exception:
-        # Attempt 2: SDXL
+        # Attempt 2: Stable Diffusion XL (Reliable fallback)
+        print("Flux busy, switching to SDXL...")
         image = hf_client.text_to_image(
             f"Movie poster for {prompt}, cinematic",
             model="stabilityai/stable-diffusion-xl-base-1.0"
@@ -49,6 +55,7 @@ def generate_poster(prompt):
 
 def generate_video(prompt):
     """Generates a video using Damo-Vilab."""
+    # Note: This often times out on the free tier (503 error)
     video_bytes = hf_client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
@@ -60,7 +67,7 @@ def generate_video(prompt):
 st.set_page_config(page_title="Free AI Content Tool", page_icon="🎓")
 
 st.title("🎓 The Student's AI Studio")
-st.markdown("Generate content for **$0** using Hugging Face.")
+st.markdown("Generate content for **$0** using Hugging Face (Text, Image & Video).")
 
 user_prompt = st.text_input("Enter your content idea:", placeholder="e.g., A robot painting a canvas in space")
 
@@ -72,13 +79,13 @@ if st.button("Generate for Free"):
         
         col1, col2 = st.columns([1, 1])
 
-        # 1. Text Generation (Now using Hugging Face)
+        # 1. Text Generation (Mistral Chat)
         with st.spinner("Writing Caption..."):
             phrase = generate_catchy_phrase(user_prompt)
             st.success("Caption Ready!")
             st.markdown(f"### 📢 {phrase}")
 
-        # 2. Image Generation
+        # 2. Image Generation (Flux or SDXL)
         with st.spinner("Generating Poster..."):
             try:
                 poster_image, model_used = generate_poster(user_prompt)
@@ -88,10 +95,11 @@ if st.button("Generate for Free"):
                 with col1:
                     st.error(f"Image generation failed: {e}")
 
-        # 3. Video Generation
-        with st.spinner("Generating Video (May timeout)..."):
+        # 3. Video Generation (Experimental)
+        with st.spinner("Generating Video (May timeout on free tier)..."):
             try:
                 video_data = generate_video(user_prompt)
+                # Save to temp file for display
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
                     tfile.write(video_data)
                     tfile_path = tfile.name
@@ -99,4 +107,4 @@ if st.button("Generate for Free"):
                     st.video(tfile_path)
             except Exception as e:
                 with col2:
-                    st.warning(f"Video skipped (Free tier timeout). Details: {e}")
+                    st.warning(f"Video skipped (Free tier limit). Details: {e}")

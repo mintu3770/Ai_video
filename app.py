@@ -18,13 +18,9 @@ hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
 
 def generate_gemini_text(prompt):
     """
-    Connects to the standard Gemini Pro model via REST API.
+    Connects to Google's API using the latest 2026 models.
     """
     api_key = st.secrets["GOOGLE_API_KEY"]
-    
-    # URL for the standard 'gemini-pro' model (Universally available)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
-    
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
@@ -32,13 +28,26 @@ def generate_gemini_text(prompt):
         }]
     }
 
+    # Attempt 1: Gemini 2.5 Flash (Current Standard)
+    model_name = "gemini-2.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+
     try:
         response = requests.post(url, headers=headers, json=payload)
         
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
         else:
-            return f"Error: {response.text}"
+            # Attempt 2: Gemini 2.0 Flash (Fallback)
+            print(f"2.5 Flash failed ({response.status_code}), trying 2.0...")
+            fallback_model = "gemini-2.0-flash"
+            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/{fallback_model}:generateContent?key={api_key}"
+            
+            response_fallback = requests.post(url_fallback, headers=headers, json=payload)
+            if response_fallback.status_code == 200:
+                return response_fallback.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            else:
+                return f"Error: {response.text}" # Return exact error for debugging
                 
     except Exception as e:
         return f"Connection Error: {e}"
@@ -52,7 +61,7 @@ def generate_poster(prompt):
         )
         return image, "Flux"
     except Exception:
-        print("Flux busy, switching to SDXL...")
+        # Fallback to SDXL
         image = hf_client.text_to_image(
             f"Movie poster for {prompt}, cinematic",
             model="stabilityai/stable-diffusion-xl-base-1.0"
@@ -72,7 +81,7 @@ def generate_video(prompt):
 st.set_page_config(page_title="Hybrid AI Studio", page_icon="🦄")
 
 st.title("🦄 The Hybrid AI Studio")
-st.markdown("Text by **Gemini Pro** | Visuals by **Hugging Face**")
+st.markdown("Text by **Gemini 2.5** | Visuals by **Hugging Face**")
 
 user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A futuristic samurai in a neon city")
 
@@ -84,11 +93,12 @@ if st.button("Generate Content"):
         
         col1, col2 = st.columns(2)
 
-        # 1. TEXT (Gemini Pro)
+        # 1. TEXT (Gemini 2.5)
         with st.spinner("Gemini is writing..."):
             caption = generate_gemini_text(user_prompt)
             if "Error" in caption:
-                st.error(caption)
+                st.error("Text Generation Failed")
+                st.code(caption) # Show the exact error code
             else:
                 st.success("✅ Caption Ready")
                 st.markdown(f"### 📢 {caption}")

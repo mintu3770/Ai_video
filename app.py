@@ -1,25 +1,28 @@
 import streamlit as st
+import replicate
 import requests
-from huggingface_hub import InferenceClient
 import tempfile
+import os
 
 # --- Configuration & Secrets ---
-# Ensure you have GOOGLE_API_KEY and HF_TOKEN in .streamlit/secrets.toml
+# 1. Google (Text)
 if "GOOGLE_API_KEY" not in st.secrets:
     st.error("Missing GOOGLE_API_KEY in secrets.")
     st.stop()
 
-if "HF_TOKEN" not in st.secrets:
-    st.error("Missing HF_TOKEN in secrets.")
+# 2. Replicate (Images & Video)
+if "REPLICATE_API_TOKEN" not in st.secrets:
+    st.error("Missing REPLICATE_API_TOKEN in secrets.")
     st.stop()
 
-hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
+# Set the environment variable for the Replicate library
+os.environ["REPLICATE_API_TOKEN"] = st.secrets["REPLICATE_API_TOKEN"]
 
 # --- Functions ---
 
 def generate_gemini_text(prompt):
     """
-    Connects to Google's API using the latest 2026 models.
+    Connects to Google's API using Gemini 2.5 Flash.
     """
     api_key = st.secrets["GOOGLE_API_KEY"]
     headers = {"Content-Type": "application/json"}
@@ -29,100 +32,105 @@ def generate_gemini_text(prompt):
         }]
     }
 
-    # Attempt 1: Gemini 2.5 Flash (Current Standard for 2026)
-    #
-    model_name = "gemini-2.5-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    # Using the standard 2026 model
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
 
     try:
         response = requests.post(url, headers=headers, json=payload)
-        
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
         else:
-            # Attempt 2: Gemini 2.0 Flash (Fallback)
-            print(f"2.5 Flash failed ({response.status_code}), trying 2.0...")
-            fallback_model = "gemini-2.0-flash"
-            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/{fallback_model}:generateContent?key={api_key}"
-            
-            response_fallback = requests.post(url_fallback, headers=headers, json=payload)
-            if response_fallback.status_code == 200:
-                return response_fallback.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-            else:
-                return f"Error: {response.text}"
-                
+            return f"Gemini Error: {response.text}"
     except Exception as e:
         return f"Connection Error: {e}"
 
-def generate_poster(prompt):
-    """Generates an image using Stable Diffusion v1.5 (Most Reliable Free Model)."""
+def generate_replicate_image(prompt):
+    """
+    Generates an image using Flux Schnell on Replicate.
+    """
     try:
-        # We use v1-5 because it is never gated and rarely hits payment limits.
-        #
-        image = hf_client.text_to_image(
-            f"Movie poster for {prompt}, cinematic, 8k, typography, title text",
-            model="runwayml/stable-diffusion-v1-5" 
+        # Flux Schnell is super fast and costs roughly $0.003 per image
+        output = replicate.run(
+            "black-forest-labs/flux-schnell",
+            input={
+                "prompt": f"cinematic movie poster for {prompt}, high quality, typography, 8k",
+                "go_fast": True,  # Optimizes for speed
+                "megapixels": "1",
+                "num_outputs": 1,
+                "aspect_ratio": "2:3", # Poster ratio
+                "output_format": "webp",
+                "output_quality": 80
+            }
         )
-        return image, "SD v1.5"
+        # Replicate returns a list of output URLs/Streams
+        return output[0], "Flux Schnell"
     except Exception as e:
-        return None, f"Image Error: {e}"
+        return None, f"Replicate Error: {e}"
 
-def generate_video(prompt):
-    """Generates a video using Damo-Vilab."""
-    # Note: This is the most unstable part on the free tier
-    video_bytes = hf_client.text_to_video(
-        prompt,
-        model="damo-vilab/text-to-video-ms-1.7b"
-    )
-    return video_bytes
+def generate_replicate_video(prompt):
+    """
+    Generates a video using Luma Ray or similar on Replicate.
+    """
+    try:
+        # Using a standard fast video model (ZeroScope is cheaper/faster than others)
+        output = replicate.run(
+            "anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351",
+            input={
+                "prompt": prompt,
+                "num_frames": 24,
+                "width": 576,
+                "height": 320
+            }
+        )
+        return output[0] # Returns the video URL
+    except Exception as e:
+        return None
 
 # --- Streamlit UI ---
 
-st.set_page_config(page_title="Hybrid AI Studio", page_icon="🦄")
+st.set_page_config(page_title="Replicate + Gemini Studio", page_icon="⚡")
 
-st.title("🦄 The Hybrid AI Studio")
-st.markdown("Text by **Gemini 2.5** | Visuals by **Stable Diffusion v1.5**")
+st.title("⚡ The High-Speed Studio")
+st.markdown("Text by **Gemini 2.5** | Visuals by **Replicate (Flux)**")
 
-user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A futuristic samurai in a neon city")
+user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A cyberpunk detective in rainy tokyo")
 
 if st.button("Generate Content"):
     if not user_prompt:
         st.warning("Please enter a prompt first!")
     else:
-        st.info("🚀 Launching Hybrid Agents...")
+        st.info("🚀 Generating content on high-speed servers...")
         
         col1, col2 = st.columns(2)
 
-        # 1. TEXT (Gemini 2.5)
-        with st.spinner("Gemini is writing..."):
+        # 1. TEXT (Gemini)
+        with st.spinner("Writing Caption..."):
             caption = generate_gemini_text(user_prompt)
             if "Error" in caption:
                 st.error("Text Generation Failed")
-                st.code(caption) 
+                st.write(caption)
             else:
                 st.success("✅ Caption Ready")
                 st.markdown(f"### 📢 {caption}")
 
-        # 2. IMAGE (Hugging Face)
-        with st.spinner("Drawing Poster..."):
-            img, model_name = generate_poster(user_prompt)
-            if img:
+        # 2. IMAGE (Replicate Flux)
+        with st.spinner("Generating Poster (Flux)..."):
+            img_url, model_name = generate_replicate_image(user_prompt)
+            if img_url:
                 with col1:
-                    st.image(img, caption=f"Poster ({model_name})", use_container_width=True)
+                    st.image(img_url, caption=f"Poster ({model_name})", use_container_width=True)
                 st.success("✅ Poster Ready")
             else:
-                st.error(model_name) # Prints the error message
+                with col1:
+                    st.error(f"Image Failed: {model_name}")
 
-        # 3. VIDEO (Hugging Face)
-        with st.spinner("Rendering Video (May timeout)..."):
-            try:
-                vid_bytes = generate_video(user_prompt)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
-                    tfile.write(vid_bytes)
-                    vid_path = tfile.name
+        # 3. VIDEO (Replicate ZeroScope)
+        with st.spinner("Rendering Video..."):
+            vid_url = generate_replicate_video(user_prompt)
+            if vid_url:
                 with col2:
-                    st.video(vid_path)
+                    st.video(vid_url)
                 st.success("✅ Video Ready")
-            except Exception as e:
+            else:
                 with col2:
-                    st.warning("Video skipped (Server Busy).")
+                    st.warning("Video failed (Check Replicate credits).")

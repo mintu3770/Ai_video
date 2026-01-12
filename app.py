@@ -1,116 +1,80 @@
 import streamlit as st
-from huggingface_hub import InferenceClient
-import time
+import requests
 import urllib.parse
-
-# --- Configuration ---
-if "HF_TOKEN" in st.secrets:
-    hf_client = InferenceClient(token=st.secrets["HF_TOKEN"])
-else:
-    st.error("Missing HF_TOKEN. Please add it to your secrets!")
-    st.stop()
+import random
 
 # --- Functions ---
 
-def generate_text_hf(prompt):
+def generate_text_pollinations(prompt):
     """
-    Uses Google's Flan-T5-Large via Hugging Face.
-    This bypasses the Gemini 429/404 errors completely.
+    Generates text using Pollinations.ai (No API Key needed).
+    This bypasses Google's 429 Quota errors.
     """
     try:
-        # Flan-T5 is an 'Instruction' model, not a 'Chat' model.
-        # It works reliably with the basic text_generation API.
-        input_text = f"Write a viral caption for a video about {prompt}"
+        # 1. Clean the prompt for URL
+        clean_prompt = urllib.parse.quote(f"Write a short, viral caption for: {prompt}")
         
-        response = hf_client.text_generation(
-            input_text,
-            model="google/flan-t5-large",
-            max_new_tokens=50,
-            temperature=0.7
-        )
-        return response
+        # 2. Call the API (It works like a web browser)
+        url = f"https://text.pollinations.ai/{clean_prompt}"
+        
+        # 3. Get the raw text
+        response = requests.get(url)
+        return response.text
+        
     except Exception as e:
-        return f"Text Error: {e}"
+        return f"Error: {e}"
 
-def generate_image_pollinations(prompt):
+def get_image_url(prompt):
     """
-    Generates an image via Pollinations.ai (Unlimited).
-    Returns both the URL and a 'Clickable' version in case the image fails to load.
+    Generates a valid Pollinations Image URL.
+    Fixes the 'broken image' icon by properly encoding the text.
     """
-    # 1. URL Encode the prompt to prevent breaking the link
-    clean_prompt = urllib.parse.quote(prompt)
+    # 1. URL Encode the prompt (Essential for complex prompts)
+    encoded_prompt = urllib.parse.quote(prompt)
     
-    # 2. Add random seed to force new image generation
-    seed = int(time.time())
+    # 2. Add random seed to force a new image every time
+    seed = random.randint(1, 99999)
     
-    # 3. Construct URL
-    url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=1024&height=1536&seed={seed}&nologo=true"
-    return url
-
-def generate_video_hf(prompt):
-    """
-    Video generation (Bonus).
-    """
-    try:
-        video_bytes = hf_client.text_to_video(
-            prompt,
-            model="damo-vilab/text-to-video-ms-1.7b"
-        )
-        return video_bytes
-    except Exception:
-        return None
+    # 3. Construct the URL (Using Flux model for quality)
+    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&seed={seed}&model=flux&nologo=true"
+    
+    return image_url
 
 # --- Streamlit UI ---
 
-st.set_page_config(page_title="Fail-Safe AI Studio", page_icon="🛡️")
+st.set_page_config(page_title="No-Limit AI Studio", page_icon="🔓")
 
-st.title("🛡️ Fail-Safe AI Studio")
-st.markdown("Bypassing Google Limits with **Flan-T5** & **Pollinations**")
+st.title("🔓 No-Limit AI Studio")
+st.markdown("Unlimited Text & Images. **No API Keys Required.**")
 
-user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A cyberpunk samurai in neon rain")
+user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A cyberpunk samurai eating ramen")
 
 if st.button("Generate Content"):
     if not user_prompt:
         st.warning("Please enter a prompt!")
     else:
-        st.info("🚀 Generating...")
+        st.info("🚀 Generating (This is 100% Free & Unlimited)...")
         
         col1, col2 = st.columns(2)
 
-        # 1. TEXT (Hugging Face / Flan-T5)
+        # 1. TEXT (Pollinations)
         with st.spinner("Writing Caption..."):
-            caption = generate_text_hf(user_prompt)
-            if "Error" in caption:
-                st.error(caption)
-            else:
+            caption = generate_text_pollinations(user_prompt)
+            if caption:
                 st.success("✅ Caption Ready")
                 st.markdown(f"### 📢 {caption}")
+            else:
+                st.error("Text Generation Failed.")
 
         # 2. IMAGE (Pollinations)
         with st.spinner("Generating Image..."):
-            img_url = generate_image_pollinations(user_prompt)
+            img_url = get_image_url(user_prompt)
             
             with col1:
-                # We try to show the image
-                st.image(img_url, caption="Pollinations Image", use_container_width=True)
-                # Backup Link: If the image above is broken, the user can click this
-                st.markdown(f"[**🔗 Click here if image doesn't load**]({img_url})")
-            
-            st.success("✅ Image Link Ready")
-
-        # 3. VIDEO (Hugging Face)
-        with st.spinner("Rendering Video (May be busy)..."):
-            vid_bytes = generate_video_hf(user_prompt)
-            if vid_bytes:
-                # Write to temp file
-                import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
-                    tfile.write(vid_bytes)
-                    vid_path = tfile.name
+                # Display the image from the URL
+                st.image(img_url, caption="Generated by Pollinations (Flux)", use_container_width=True)
                 
-                with col2:
-                    st.video(vid_path)
-                st.success("✅ Video Ready")
-            else:
-                with col2:
-                    st.warning("Video Server Busy (Free Tier).")
+                # Backup Link: If the image fails to load in the app, this button opens it
+                st.link_button("⬇️ Download / Open Image", img_url)
+            
+            st.success("✅ Image Ready")

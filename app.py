@@ -9,42 +9,31 @@ else:
     st.error("Missing HF_TOKEN in secrets!")
     st.stop()
 
-# --- PIPELINE 1: TEXT (Dual-Model Fallback) ---
+# --- PIPELINE 1: TEXT (Lightweight & Fast) ---
 def pipeline_text(prompt):
     """
-    Tries Microsoft Phi-2 (Smart). 
-    If that fails, falls back to GPT-2 (Reliable).
+    Uses Google's Flan-T5-Base.
+    This model is small (250MB) vs others (10GB+), 
+    so it loads instantly and rarely times out on free tier.
     """
-    # Attempt 1: Microsoft Phi-2 (Smart & Fast)
     try:
-        # Phi-2 works best with a "completion" style prompt
-        input_text = f"Instruct: Write a short, viral social media caption for a video about {prompt}.\nOutput:"
+        # T5 is an encoder-decoder model, perfect for "instructions"
+        input_text = f"write a viral caption about {prompt}"
         
         response = client.text_generation(
             input_text,
-            model="microsoft/phi-2", 
+            model="google/flan-t5-base", 
             max_new_tokens=50,
-            temperature=0.7,
-            stop_sequences=["\n"] # Stop it from rambling
+            temperature=0.7
         )
-        return response.strip()
+        return response
         
-    except Exception as e1:
-        # Attempt 2: GPT-2 (The "Old Reliable" fallback)
-        try:
-            print(f"Phi-2 failed ({e1}). Switching to GPT-2...")
-            response = client.text_generation(
-                f"Video caption for {prompt}:", # Simple prompt for GPT-2
-                model="gpt2", 
-                max_new_tokens=30
-            )
-            return response.strip()
-        except Exception as e2:
-            return f"Error: Both models failed. Details: {e2}"
+    except Exception as e:
+        # Return the exact error so we can see it in the UI
+        return f"Error: {e}"
 
-# --- PIPELINE 2: IMAGE (Flux) ---
+# --- PIPELINE 2: IMAGE (Flux with Fallback) ---
 def pipeline_image(prompt):
-    """Uses Flux.1-dev with SDXL fallback."""
     try:
         image = client.text_to_image(
             f"Movie poster for {prompt}, cinematic, 8k, highly detailed",
@@ -52,7 +41,7 @@ def pipeline_image(prompt):
         )
         return image, "Flux"
     except Exception:
-        # Fallback to SDXL
+        # Fallback to SDXL if Flux is busy
         image = client.text_to_image(
             f"Movie poster for {prompt}",
             model="stabilityai/stable-diffusion-xl-base-1.0"
@@ -61,7 +50,6 @@ def pipeline_image(prompt):
 
 # --- PIPELINE 3: VIDEO ---
 def pipeline_video(prompt):
-    """Experimental Video Generation."""
     return client.text_to_video(
         prompt,
         model="damo-vilab/text-to-video-ms-1.7b"
@@ -72,7 +60,7 @@ def pipeline_video(prompt):
 st.set_page_config(page_title="AI Pipeline Studio", page_icon="⚡")
 
 st.title("⚡ The 3-Pipeline Studio")
-st.markdown("Using specialized models for Text, Image, and Video.")
+st.markdown("Using **Fast Models** (Flan-T5) to prevent timeouts.")
 
 user_prompt = st.text_input("Enter content idea:", placeholder="e.g., A cybernetic tiger running in neon rain")
 
@@ -86,10 +74,10 @@ if st.button("Run Pipelines"):
         with st.spinner("Pipeline 1: Text..."):
             caption = pipeline_text(user_prompt)
             
-            # Check if the result is an error message
-            if "Error:" in caption:
-                st.error("Text Pipeline Failed")
-                st.write(caption) # Show the error details
+            # Check for error string
+            if caption.startswith("Error:"):
+                st.error("Text Generation Failed. Details:")
+                st.code(caption) # This will print the EXACT error message
             else:
                 st.success("✅ Caption Generated")
                 st.markdown(f"### 📢 {caption}")
